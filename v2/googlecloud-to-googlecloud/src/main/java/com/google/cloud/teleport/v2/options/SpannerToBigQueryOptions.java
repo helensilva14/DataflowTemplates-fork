@@ -24,11 +24,11 @@ import org.apache.beam.sdk.options.Validation.Required;
 
 /** Custom options for {@link com.google.cloud.teleport.v2.templates.SpannerToBigQuery} pipeline. */
 public interface SpannerToBigQueryOptions extends PipelineOptions, WriteOptions {
-  @Description("Spanner table to parse.")
+  @Description("Spanner table to read data from.")
   @Required
-  String getSpannerTable();
+  String getSpannerTableId();
 
-  void setSpannerTable(String spannerTable);
+  void setSpannerTableId(String spannerTableId);
 
   @Description("Instance id for spanner table.")
   @Required

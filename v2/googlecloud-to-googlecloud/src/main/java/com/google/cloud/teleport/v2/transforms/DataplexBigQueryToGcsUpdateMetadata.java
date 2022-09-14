@@ -22,6 +22,7 @@ import com.google.api.services.dataplex.v1.model.GoogleCloudDataplexV1Partition;
 import com.google.api.services.dataplex.v1.model.GoogleCloudDataplexV1Schema;
 import com.google.cloud.teleport.v2.clients.DataplexClient;
 import com.google.cloud.teleport.v2.clients.DataplexClientFactory;
+import com.google.cloud.teleport.v2.options.DataplexUpdateMetadataOptions;
 import com.google.cloud.teleport.v2.utils.BigQueryToGcsDirectoryNaming;
 import com.google.cloud.teleport.v2.utils.DataplexUtils;
 import com.google.cloud.teleport.v2.utils.FileFormat.FileFormatOptions;
@@ -35,14 +36,11 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-import org.apache.beam.sdk.options.Default;
-import org.apache.beam.sdk.options.Description;
+import java.util.stream.Collectors;
 import org.apache.beam.sdk.options.PipelineOptions;
-import org.apache.beam.sdk.options.Validation.Required;
 import org.apache.beam.sdk.transforms.Combine;
 import org.apache.beam.sdk.transforms.Combine.CombineFn;
 import org.apache.beam.sdk.transforms.DoFn;
-import org.apache.beam.sdk.transforms.DoFn.Setup;
 import org.apache.beam.sdk.transforms.PTransform;
 import org.apache.beam.sdk.transforms.ParDo;
 import org.apache.beam.sdk.values.KV;
@@ -106,7 +104,7 @@ public class DataplexBigQueryToGcsUpdateMetadata
         @Element Map<BigQueryTable, Map<BigQueryTablePartition, Set<String>>> input,
         PipelineOptions options) {
 
-      if (!options.as(Options.class).getUpdateDataplexMetadata()) {
+      if (!options.as(DataplexUpdateMetadataOptions.class).getUpdateDataplexMetadata()) {
         LOG.info("Skipping Dataplex Metadata update.");
       } else {
         // Need to only update entities here. All entities should've been pre-created
@@ -178,18 +176,22 @@ public class DataplexBigQueryToGcsUpdateMetadata
     private void updatePartitionMetadata(
         BigQueryTable table, BigQueryTablePartition partition, Set<String> fileNames) {
 
-      if (fileNames.size() > 1) {
-        LOG.warn(
-            "Partition {} for entity {} has more than 1 file,"
-                + " adding only the first one to Dataplex metadata: {}.",
-            partition.getPartitionName(),
-            table.getDataplexEntityName(),
-            fileNames);
+      // Partition location should be set to the parent directory of all the generated files.
+      // Strip everything after the last / and check that all the files are in the same directory:
+      Set<String> locations =
+          fileNames.stream()
+              .map(s -> s.substring(0, s.lastIndexOf('/')))
+              .collect(Collectors.toSet());
+      if (locations.size() > 1) {
+        throw new IllegalStateException(
+            String.format(
+                "Unexpected multiple file locations for the same partition %s (entity %s): %s",
+                partition.getPartitionName(), table.getDataplexEntityName(), locations));
       }
 
       GoogleCloudDataplexV1Partition p =
           new GoogleCloudDataplexV1Partition()
-              .setLocation(fileNames.iterator().next())
+              .setLocation(locations.iterator().next())
               .setValues(Collections.singletonList(partition.getPartitionName()));
 
       GoogleCloudDataplexV1Partition createdPartition;
@@ -271,16 +273,5 @@ public class DataplexBigQueryToGcsUpdateMetadata
         Map<BigQueryTable, Map<BigQueryTablePartition, Set<String>>> accumulator) {
       return accumulator;
     }
-  }
-
-  /** Pipeline options supported by {@link DataplexBigQueryToGcsUpdateMetadata}. */
-  public interface Options extends PipelineOptions {
-    @Description(
-        "Whether to update Dataplex metadata for the newly created entities. Default: false.")
-    @Default.Boolean(false)
-    @Required
-    Boolean getUpdateDataplexMetadata();
-
-    void setUpdateDataplexMetadata(Boolean updateDataplexMetadata);
   }
 }

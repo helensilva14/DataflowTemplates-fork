@@ -19,7 +19,6 @@ import static com.google.common.truth.Truth.assertThat;
 import static com.google.re2j.Pattern.CASE_INSENSITIVE;
 import static com.google.re2j.Pattern.DOTALL;
 import static org.junit.Assert.fail;
-import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.atLeastOnce;
@@ -363,6 +362,12 @@ public class DataplexBigQueryToGcsTest {
                 ImmutableList.of(
                     partitionedEntityWithEmptySchema.clone(),
                     unpartitionedEntityWithEmptySchema.clone()));
+    when(dataplexClientMock.getEntity(any()))
+        .thenAnswer(
+            invocation -> {
+              String name = invocation.getArgument(0);
+              return entities.get(name).clone();
+            });
     when(dataplexClientMock.getEntities(any()))
         .thenAnswer(
             invocation -> {
@@ -416,16 +421,16 @@ public class DataplexBigQueryToGcsTest {
                             CompressionFormat.COMPRESSION_FORMAT_UNSPECIFIED.name()))
                 .clone()
                 .setSchema(dataplexUnpartitionedSchema.clone().setUserManaged(true)));
-    // Don't know the generated temp file names used for partition.getLocation(),
-    // so need a custom arg matcher to verify values only:
     verify(dataplexClientMock, times(1))
         .createOrUpdatePartition(
-            eq("partitioned_table_entity"),
-            argThat(p -> p.getValues().size() == 1 && p.getValues().get(0).equals("p1")));
+            "partitioned_table_entity",
+            dataplexPartition("p1")
+                .setLocation(outDir.getAbsolutePath() + "/partitioned_table/ts_pid=p1"));
     verify(dataplexClientMock, times(1))
         .createOrUpdatePartition(
-            eq("partitioned_table_entity"),
-            argThat(p -> p.getValues().size() == 1 && p.getValues().get(0).equals("p2")));
+            "partitioned_table_entity",
+            dataplexPartition("p2")
+                .setLocation(outDir.getAbsolutePath() + "/partitioned_table/ts_pid=p2"));
 
     // Verify source BQ tables were deleted:
 
@@ -747,7 +752,7 @@ public class DataplexBigQueryToGcsTest {
             .setName("should_not_be_used")
             .setId("partitioned_table")
             .setDataPath("gs://wrong_bucket/partitioned_table");
-    when(dataplexClientMock.listEntities(eq(DataplexUtils.getZoneFromAsset(ASSET_NAME)), any()))
+    when(dataplexClientMock.listEntities(eq(zoneName), any()))
         .thenAnswer(
             invocation -> {
               String filter = invocation.getArgument(1);
@@ -964,5 +969,9 @@ public class DataplexBigQueryToGcsTest {
   private static GoogleCloudDataplexV1SchemaPartitionField dataplexPartitionField(
       String name, String type) {
     return new GoogleCloudDataplexV1SchemaPartitionField().setName(name).setType(type);
+  }
+
+  private static GoogleCloudDataplexV1Partition dataplexPartition(String... value) {
+    return new GoogleCloudDataplexV1Partition().setValues(Arrays.asList(value));
   }
 }
