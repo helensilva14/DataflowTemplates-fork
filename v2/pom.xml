@@ -42,7 +42,7 @@
         <jib.maven.version>2.6.0</jib.maven.version>
         <junit-dep.version>4.10</junit-dep.version>
         <opencensus.version>0.31.0</opencensus.version>
-
+        <connector.version>2.44.0-SNAPSHOT</connector.version>
         <excluded.spanner.tests>com.google.cloud.teleport.v2.spanner.IntegrationTest</excluded.spanner.tests>
     </properties>
 
@@ -89,6 +89,7 @@
         <dependency>
             <groupId>org.apache.beam</groupId>
             <artifactId>beam-sdks-java-io-google-cloud-platform</artifactId>
+            <version>${connector.version}</version>
             <exclusions>
                 <exclusion>
                   <groupId>junit</groupId>
