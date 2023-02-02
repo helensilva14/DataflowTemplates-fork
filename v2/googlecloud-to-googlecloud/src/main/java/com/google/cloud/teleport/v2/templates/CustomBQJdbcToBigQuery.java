@@ -1,3 +1,18 @@
+/*
+ * Copyright (C) 2023 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
+ */
 package com.google.cloud.teleport.v2.templates;
 
 import static com.google.cloud.teleport.v2.utils.KMSUtils.maybeDecrypt;
@@ -87,7 +102,7 @@ public class CustomBQJdbcToBigQuery {
         order = 3,
         optional = false,
         regexes = {
-            "(^jdbc:[a-zA-Z0-9/:@.?_+!*=&-;]+$)|(^([A-Za-z0-9+/]{4}){1,}([A-Za-z0-9+/]{0,3})={0,3})"
+          "(^jdbc:[a-zA-Z0-9/:@.?_+!*=&-;]+$)|(^([A-Za-z0-9+/]{4}){1,}([A-Za-z0-9+/]{0,3})={0,3})"
         },
         description = "JDBC connection URL string.",
         helpText =
@@ -173,7 +188,8 @@ public class CustomBQJdbcToBigQuery {
             "If this parameter is provided, password, user name and connection string should all be"
                 + " passed in encrypted. Encrypt parameters using the KMS API encrypt endpoint. See:"
                 + " https://cloud.google.com/kms/docs/reference/rest/v1/projects.locations.keyRings.cryptoKeys/encrypt",
-        example = "projects/your-project/locations/global/keyRings/your-keyring/cryptoKeys/your-key")
+        example =
+            "projects/your-project/locations/global/keyRings/your-keyring/cryptoKeys/your-key")
     String getKMSEncryptionKey();
 
     void setKMSEncryptionKey(String keyName);
@@ -213,7 +229,6 @@ public class CustomBQJdbcToBigQuery {
     void setInputTable(String value);
   }
 
-
   /**
    * Main entry point for executing the pipeline. This will run the pipeline asynchronously. If
    * blocking execution is required, use the {@link JdbcToBigQuery#run} method to start the pipeline
@@ -249,53 +264,70 @@ public class CustomBQJdbcToBigQuery {
     /*
      * Step 1: Read records from existing BigQuery table (PCollection<TableRow>)
      */
-    PCollection<KV<String, TableRow>> bqData = pipeline
-        .apply("Read from input BigQuery table",
-            BigQueryIO.readTableRows()
-            .withoutValidation()
-            .from(options.getInputTable()))
-        .apply("Convert to KV<dept_no, TableRow>",
-            WithKeys.of((SerializableFunction<TableRow, String>) row -> (String)row.get("dept_no")));
+    PCollection<KV<String, TableRow>> bqData =
+        pipeline
+            .apply(
+                "Read from input BigQuery table",
+                BigQueryIO.readTableRows().withoutValidation().from(options.getInputTable()))
+            .apply(
+                "Convert to KV<dept_no, TableRow>",
+                WithKeys.of(
+                    (SerializableFunction<TableRow, String>) row -> (String) row.get("dept_no")));
 
     /*
      * Step 2: Read records via JDBC and convert to TableRow
      *         via {@link org.apache.beam.sdk.io.jdbc.JdbcIO.RowMapper}
      */
-    PCollection<KV<String, TableRow>> mySqlData = pipeline
-        .apply("Read from JdbcIO", DynamicJdbcIO.<TableRow>read()
-            .withDataSourceConfiguration(
-                DynamicDataSourceConfiguration.create(options.getDriverClassName(),
-                    maybeDecrypt(options.getConnectionURL(), options.getKMSEncryptionKey()))
-                .withUsername(maybeDecrypt(options.getUsername(), options.getKMSEncryptionKey()))
-                .withPassword(maybeDecrypt(options.getPassword(), options.getKMSEncryptionKey()))
-                .withDriverJars(options.getDriverJars())
-                .withConnectionProperties(options.getConnectionProperties())
-            )
-                .withQuery(options.getQuery())
-                .withCoder(TableRowJsonCoder.of())
-                .withRowMapper(JdbcConverters.getResultSetToTableRow(options.getUseColumnAlias()))
-        )
-        .apply("Convert to KV<dept_no, TableRow>",
-            WithKeys.of((SerializableFunction<TableRow, String>) row -> (String)row.get("dept_no")));;
+    PCollection<KV<String, TableRow>> mySqlData =
+        pipeline
+            .apply(
+                "Read from JdbcIO",
+                DynamicJdbcIO.<TableRow>read()
+                    .withDataSourceConfiguration(
+                        DynamicDataSourceConfiguration.create(
+                                options.getDriverClassName(),
+                                maybeDecrypt(
+                                    options.getConnectionURL(), options.getKMSEncryptionKey()))
+                            .withUsername(
+                                maybeDecrypt(options.getUsername(), options.getKMSEncryptionKey()))
+                            .withPassword(
+                                maybeDecrypt(options.getPassword(), options.getKMSEncryptionKey()))
+                            .withDriverJars(options.getDriverJars())
+                            .withConnectionProperties(options.getConnectionProperties()))
+                    .withQuery(options.getQuery())
+                    .withCoder(TableRowJsonCoder.of())
+                    .withRowMapper(
+                        JdbcConverters.getResultSetToTableRow(options.getUseColumnAlias())))
+            .apply(
+                "Convert to KV<dept_no, TableRow>",
+                WithKeys.of(
+                    (SerializableFunction<TableRow, String>) row -> (String) row.get("dept_no")));
+    ;
 
     final TupleTag<TableRow> bqDataTag = new TupleTag<>();
     final TupleTag<TableRow> mySqlDataTag = new TupleTag<>();
 
     // Merge collection values into a CoGbkResult collection.
     PCollection<KV<String, CoGbkResult>> joinedCollection =
-        KeyedPCollectionTuple
-            .of(bqDataTag, bqData)
+        KeyedPCollectionTuple.of(bqDataTag, bqData)
             .and(mySqlDataTag, mySqlData)
             .apply(CoGroupByKey.create());
 
-    //joinedCollection.apply(MapElements.into(TypeDescriptors.strings()));
+    // Maps records to strings
+    joinedCollection
+        .apply(MapElements.into(TypeDescriptors.strings()).via(record -> record.toString()))
+        // Writes each window of records into GCS
+        .apply(
+            TextIO.write()
+                .to("gs://cdi-sandbox-dataflow/custom-template/merge_result.txt")
+                .withNumShards(1));
 
-    //joinedCollection.apply(TextIO.write().to("result.txt"));
-
-        /*
-         * Step 2: Append TableRow to an existing BigQuery table
-         */
-     //   .apply("Write to BigQuery", writeToBQ);
+    // joinedCollection.apply(MapElements.into(TypeDescriptors.strings()));
+    // joinedCollection.apply(TextIO.write().to("result.txt"));
+    /*
+     * Step 2: Append TableRow to an existing BigQuery table
+     */
+    //   .apply("Write to BigQuery", writeToBQ);
 
     // Execute the pipeline and return the result.
     return pipeline.run();
